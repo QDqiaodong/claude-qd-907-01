@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 
@@ -133,6 +133,7 @@ async function load() {
   try {
     board.value = await api.charge.board()
     await loadSheets()
+    await loadSimHeats()
   } catch (e) {
     ElMessage.error(e.message)
   } finally {
@@ -141,6 +142,93 @@ async function load() {
 }
 
 onMounted(load)
+
+// ---------------- 配料偏差双方案推演（只读试算，不改动炉次/配料/炉体） ----------------
+const simHeats = ref([])
+const simMaterials = ref([])
+const simMaxItemWeight = ref(2000)
+const simForm = ref({ heatId: null, targetWeight: null, allowNew: true, caps: {} })
+const simResult = ref(null)
+const simLoading = ref(false)
+const simError = ref('')
+let simSeq = 0 // 输入版本号：较慢的旧计算返回时不得覆盖新结果
+let simTimer = null
+
+const simHeat = computed(() => simHeats.value.find((h) => h.id === simForm.value.heatId) || null)
+const simSchemes = computed(() => {
+  if (!simResult.value) return []
+  return [simResult.value.minCost, simResult.value.minDeviation].filter(Boolean)
+})
+
+const f2 = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(2))
+
+async function loadSimHeats() {
+  const data = await api.charge.simulateHeats()
+  simHeats.value = data.heats || []
+  simMaterials.value = data.materials || []
+  simMaxItemWeight.value = Number(data.maxItemWeight || 2000)
+  const caps = {}
+  for (const m of simMaterials.value) caps[m.code] = simMaxItemWeight.value
+  simForm.value.caps = caps
+  if (simHeats.value.length && !simForm.value.heatId) {
+    simForm.value.heatId = simHeats.value[0].id
+    syncSimTarget()
+  }
+}
+
+function syncSimTarget() {
+  const h = simHeat.value
+  simForm.value.targetWeight = h && h.planWeight ? Number(h.planWeight) : null
+}
+
+async function runSimulate() {
+  if (!simForm.value.heatId) {
+    simResult.value = null
+    return
+  }
+  if (!simForm.value.targetWeight || simForm.value.targetWeight <= 0) {
+    simResult.value = null
+    simError.value = '请填写目标重量（炉次无计划重量时必须在页面指定）'
+    return
+  }
+  const seq = ++simSeq
+  simLoading.value = true
+  simError.value = ''
+  try {
+    const res = await api.charge.simulate({
+      heatId: simForm.value.heatId,
+      targetWeight: simForm.value.targetWeight,
+      allowNewMaterial: simForm.value.allowNew,
+      itemCaps: { ...simForm.value.caps }
+    })
+    if (seq !== simSeq) return // 已有更新的输入在算，这份过期结果直接丢弃
+    simResult.value = res
+  } catch (e) {
+    if (seq !== simSeq) return
+    simResult.value = null
+    simError.value = e.message
+  } finally {
+    if (seq === simSeq) simLoading.value = false
+  }
+}
+
+/** 目标重量 / 单项上限 / 是否允许新料变化 → 防抖重算，两套方案始终基于同一输入版本 */
+function queueSimulate() {
+  clearTimeout(simTimer)
+  simTimer = setTimeout(runSimulate, 350)
+}
+
+watch(
+  () => simForm.value.heatId,
+  () => {
+    syncSimTarget()
+    queueSimulate()
+  }
+)
+watch(
+  () => [simForm.value.targetWeight, simForm.value.allowNew, JSON.stringify(simForm.value.caps)],
+  queueSimulate
+)
 </script>
 
 <template>
@@ -221,6 +309,127 @@ onMounted(load)
         </div>
       </section>
     </div>
+
+    <section class="panel sim-panel">
+      <div class="panel-title">
+        配料偏差双方案推演
+        <span class="view-tip">
+          选中未出炉炉次，以当前配料明细 / 目标重量 / 炉体容量 / 合金材质 / 回炉料比例为同一基准，
+          一次试算「最低补料成本」与「最小成分偏离」两套方案 · 只推演不写库，正式调整仍走上方微调流程
+        </span>
+      </div>
+
+      <div class="sim-controls">
+        <el-select v-model="simForm.heatId" placeholder="选择未出炉炉次" size="small" style="width: 340px">
+          <el-option
+            v-for="h in simHeats"
+            :key="h.id"
+            :value="h.id"
+            :label="h.heatNo + ' · ' + h.alloyName + ' · ' + h.stageName + ' · 计划 ' + f2(h.planWeight) + ' kg · ' + (h.furnaceNo ? h.furnaceNo + ' 容量 ' + f2(h.capacityKg) + ' kg' : '未排炉')"
+          />
+        </el-select>
+        <span class="sim-label">目标重量</span>
+        <el-input-number v-model="simForm.targetWeight" :min="1" :step="10" size="small" style="width: 130px" />
+        <span class="sim-label">kg</span>
+        <el-checkbox v-model="simForm.allowNew" size="small">允许新料</el-checkbox>
+        <el-button size="small" type="primary" plain :loading="simLoading" @click="runSimulate">重新推演</el-button>
+      </div>
+
+      <div class="sim-caps" v-if="simMaterials.length">
+        <span class="sim-label">单项上限 kg：</span>
+        <span v-for="m in simMaterials" :key="m.code" class="cap-cell">
+          <span class="dot" :style="{ background: m.color }"></span>{{ m.name }}
+          <el-input-number v-model="simForm.caps[m.code]" :min="1" :max="simMaxItemWeight" :step="50" size="small" style="width: 118px" />
+        </span>
+      </div>
+
+      <div v-if="simError" class="sim-error">{{ simError }}</div>
+
+      <template v-if="simResult">
+        <div class="sim-baseline">
+          <b>同一基准</b>
+          <span>{{ simResult.baseline.heatNo }} · {{ simResult.baseline.alloyName }} · {{ simResult.baseline.stageName }}</span>
+          <span>目标 {{ f2(simResult.baseline.targetWeight) }} kg（{{ simResult.baseline.targetSource }}，允许 ±{{ simResult.baseline.deviationLimitRate }}%）</span>
+          <span>炉体容量 {{ simResult.baseline.capacityKg ? f2(simResult.baseline.capacityKg) + ' kg' : '未关联炉体' }}</span>
+          <span>
+            当前配料 {{ f2(simResult.baseline.currentTotalKg) }} kg（{{ simResult.baseline.chargeNo || '空基准' }}<template v-if="simResult.baseline.currentScrapRatio !== null">，回炉料 {{ f2(simResult.baseline.currentScrapRatio) }}%</template>）
+          </span>
+          <span>回炉料上限 {{ f2(simResult.baseline.scrapRatioMax) }}%</span>
+          <span>{{ simResult.baseline.allowNewMaterial ? '允许新料' : '仅现有料项' }}</span>
+        </div>
+
+        <div v-if="!simResult.feasible" class="sim-conflicts">
+          <div class="conflict-title">约束互相矛盾，无法形成合法方案（不给出误导性推荐）：</div>
+          <div v-for="(c, i) in simResult.conflicts" :key="i" class="conflict-line">⚠ {{ c }}</div>
+          <div class="sim-schemes">
+            <div class="scheme-card infeasible" v-for="s in simSchemes" :key="s.code">
+              <div class="scheme-head">
+                <span class="scheme-name">{{ s.name }}</span>
+                <span class="scheme-badge bad">不可行</span>
+              </div>
+              <div class="scheme-notes">
+                <div v-for="(n, i) in s.infeasibleReasons" :key="i">· {{ n }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <template v-else>
+          <div class="sim-schemes">
+            <div
+              v-for="s in simSchemes"
+              :key="s.code"
+              class="scheme-card"
+              :class="{ recommended: simResult.recommendation && simResult.recommendation.choice === s.code }"
+            >
+              <div class="scheme-head">
+                <span class="scheme-name">{{ s.name }}</span>
+                <span class="scheme-badge" v-if="simResult.recommendation && simResult.recommendation.choice === s.code">推荐</span>
+              </div>
+              <div class="scheme-metrics">
+                <span>试算总重 <b>{{ f2(s.totalWeight) }} kg</b></span>
+                <span>偏差率 <b>{{ f2(s.deviationRate) }}%</b></span>
+                <span>回炉料 <b>{{ f2(s.scrapRatio) }}%</b><i>/上限 {{ f2(s.scrapLimit) }}%</i></span>
+                <span>补料成本 <b>{{ f2(s.supplementCost) }} 元</b></span>
+                <span>成分偏离 <b>{{ f2(s.compositionDeviation) }} 点</b></span>
+              </div>
+              <table class="scheme-table">
+                <thead>
+                  <tr><th>料项</th><th>当前 kg</th><th>建议 kg</th><th>增减 kg</th><th>补料费 元</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="a in s.adjustments" :key="a.materialCode">
+                    <td>
+                      <span class="dot" :style="{ background: a.color }"></span>{{ a.materialName }}
+                      <em v-if="a.isNew" class="new-tag">新料</em>
+                    </td>
+                    <td>{{ f2(a.currentKg) }}</td>
+                    <td>{{ f2(a.suggestKg) }}</td>
+                    <td :class="a.deltaKg > 0 ? 'up' : 'down'">{{ a.deltaKg > 0 ? '+' : '' }}{{ f2(a.deltaKg) }}</td>
+                    <td>{{ f2(a.costDelta) }}</td>
+                  </tr>
+                  <tr v-if="!s.adjustments.length"><td colspan="5" class="empty-cell">当前配料已满足约束，无需调整</td></tr>
+                </tbody>
+              </table>
+              <div class="scheme-notes" v-if="s.notes.length">
+                <div v-for="(n, i) in s.notes" :key="i">· {{ n }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sim-reco" :class="{ none: simResult.recommendation.choice === 'NONE' }">
+            <template v-if="simResult.recommendation.choice === 'NONE'">
+              ⚖ <b>两套方案等价：无偏好</b>。{{ simResult.recommendation.reason }}
+            </template>
+            <template v-else>
+              ★ 推荐「<b>{{ simResult.recommendation.choiceName }}</b>」：{{ simResult.recommendation.reason }}
+              <div class="sacrifice">未选方案的代价：{{ simResult.recommendation.sacrifice }}</div>
+            </template>
+          </div>
+        </template>
+      </template>
+      <div v-else-if="!simLoading && !simError" class="empty-tip">选择未出炉炉次后自动推演</div>
+    </section>
 
     <el-dialog v-model="createOpen" title="新建配料单" width="620px">
       <el-form label-width="88px">
@@ -342,4 +551,68 @@ onMounted(load)
 .dev-box.over { background: #fdecea; border-color: #f3c2bd; color: #a01a14; font-weight: 700; }
 
 .op-row { margin-top: 12px; display: flex; gap: 8px; }
+
+/* ---------------- 双方案推演 ---------------- */
+.sim-panel { margin-top: 12px; }
+.sim-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sim-label { font-size: 12.5px; color: var(--ink-soft); }
+.sim-caps {
+  display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap;
+  margin-top: 10px; padding: 8px 10px;
+  background: #faf7fd; border: 1px dashed var(--line); border-radius: 9px;
+}
+.cap-cell { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-soft); }
+
+.sim-error {
+  margin-top: 10px; padding: 9px 12px; border-radius: 9px;
+  background: #fdecea; border: 1px solid #f3c2bd; color: #a01a14; font-size: 12.5px;
+}
+
+.sim-baseline {
+  display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap;
+  margin-top: 12px; padding: 8px 12px; border-radius: 9px;
+  background: var(--primary-wash); font-size: 12px; color: var(--primary-deep);
+}
+.sim-baseline b { font-weight: 800; }
+
+.sim-conflicts {
+  margin-top: 12px; padding: 10px 12px; border-radius: 9px;
+  background: #fdf3e7; border: 1px solid #f0d9b5; color: #8a5a00; font-size: 12.5px;
+}
+.conflict-title { font-weight: 800; margin-bottom: 6px; }
+.conflict-line { margin: 3px 0; }
+
+.sim-schemes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.scheme-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.scheme-card.recommended { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-wash); }
+.scheme-card.infeasible { border-color: #f0d9b5; background: #fffaf2; }
+.scheme-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.scheme-name { font-weight: 800; color: var(--primary-deep); }
+.scheme-badge { padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; background: var(--pass); }
+.scheme-badge.bad { background: var(--warn); }
+
+.scheme-metrics { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; }
+.scheme-metrics b { color: var(--ink); }
+.scheme-metrics i { font-style: normal; color: var(--ink-dim); margin-left: 3px; }
+
+.scheme-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.scheme-table th, .scheme-table td { padding: 4px 6px; text-align: right; border-bottom: 1px dashed var(--line); }
+.scheme-table th:first-child, .scheme-table td:first-child { text-align: left; }
+.scheme-table th { color: var(--ink-dim); font-weight: 600; }
+.scheme-table .up { color: var(--pass); font-weight: 700; }
+.scheme-table .down { color: var(--pour); font-weight: 700; }
+.new-tag {
+  font-style: normal; font-size: 10px; color: #fff;
+  background: var(--primary-soft); border-radius: 4px; padding: 0 4px; margin-left: 4px;
+}
+.empty-cell { text-align: center !important; color: var(--ink-dim); }
+
+.scheme-notes { margin-top: 8px; font-size: 11.5px; color: var(--ink-dim); }
+
+.sim-reco {
+  margin-top: 12px; padding: 10px 12px; border-radius: 9px;
+  background: #eef6ef; border: 1px solid #c9e6cf; color: #256b2c; font-size: 12.5px;
+}
+.sim-reco.none { background: #f1ebf6; border-color: var(--line-strong); color: var(--ink-soft); }
+.sim-reco .sacrifice { margin-top: 4px; font-size: 12px; opacity: .85; }
 </style>

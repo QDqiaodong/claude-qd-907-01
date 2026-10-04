@@ -276,7 +276,10 @@ INSERT INTO charge (charge_no, heat_id, heat_no, item_count, total_weight, targe
 ('CH-2603-0105', 5,  'H-2603-0305', 4, 2544.00, 2540.00,  0.16, '刘保国', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 5 HOUR, 'ZG270 大件，回炉料为浇冒口料'),
 ('CH-2603-0106', 6,  'H-2603-0306', 5, 2634.00, 2620.80,  0.50, '刘保国', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 4 HOUR, '含高锰铁，注意 Mn 上限'),
 ('CH-2603-0107', 8,  'H-2603-0308', 3,  384.00,  385.40, -0.36, '马春林', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 2 HOUR, 'ZL104 铝锭 + 回炉料'),
-('CH-2603-0108', 12, 'H-2603-0312', 4, 2737.00, 2735.60,  0.05, '刘保国', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 12 HOUR, '横梁主料，偏差控制最好');
+('CH-2603-0108', 12, 'H-2603-0312', 4, 2737.00, 2735.60,  0.05, '刘保国', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 12 HOUR, '横梁主料，偏差控制最好'),
+-- 未出炉炉次的在配配料单：双方案推演以它们为「当前配料明细」基准
+('CH-2603-0109', 10, 'H-2603-0310', 5,  847.00,  860.00, -1.51, '郑海燕', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 50 MINUTE, 'HT250 待装料，回炉料比例偏高'),
+('CH-2603-0110', 11, 'H-2603-0311', 6,  695.00,  700.00, -0.71, '赵立新', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 MINUTE, 'QT450 待装料，待推演微调');
 
 INSERT INTO charge_item (charge_id, material_code, material_name, weight_kg, ratio, remark) VALUES
 (1, 'PIG_IRON',  '铸造生铁 Q10',     420.00, 35.50, '低磷生铁'),
@@ -312,7 +315,19 @@ INSERT INTO charge_item (charge_id, material_code, material_name, weight_kg, rat
 (8, 'PIG_IRON',  '铸造生铁 Q10',     760.00, 27.77, '批量备料'),
 (8, 'SCRAP',     '回炉料（浇冒口）', 1820.00, 66.50, '横梁浇冒口'),
 (8, 'FERRO_MN',  '锰铁 FeMn65',       95.00,  3.47, '调 Mn'),
-(8, 'FLUX',      '石灰造渣剂',        62.00,  2.27, '打渣覆盖');
+(8, 'FLUX',      '石灰造渣剂',        62.00,  2.27, '打渣覆盖'),
+-- 未出炉炉次 H-2603-0310 / H-2603-0311 的在配明细（双方案推演基准）
+(9, 'PIG_IRON',  '铸造生铁 Q10',     380.00, 44.86, '新生铁'),
+(9, 'SCRAP',     '回炉料（浇冒口）', 400.00, 47.23, '灰铁回炉料'),
+(9, 'FERRO_SI',  '硅铁 FeSi75',       25.00,  2.95, '孕育前调硅'),
+(9, 'CARBURANT', '增碳剂',            30.00,  3.54, '合成铸铁增碳'),
+(9, 'FLUX',      '石灰造渣剂',        12.00,  1.42, '打渣用'),
+(10, 'PIG_IRON', '铸造生铁 Q10',     300.00, 43.17, '低钛生铁'),
+(10, 'SCRAP',    '回炉料（浇冒口）', 330.00, 47.48, '球铁回炉料'),
+(10, 'FERRO_SI', '硅铁 FeSi75',       28.00,  4.03, '球化后孕育'),
+(10, 'FERRO_MN', '锰铁 FeMn65',       12.00,  1.73, '调 Mn'),
+(10, 'CARBURANT','增碳剂',            15.00,  2.16, '补碳'),
+(10, 'FLUX',     '石灰造渣剂',        10.00,  1.44, '脱硫打渣');
 
 INSERT INTO mold (mold_no, mold_name, mold_type, cavity_count, life_count, used_count, fit_material, status, storage_slot, note, created_at) VALUES
 ('M-WAX-011',  '离心叶轮蜡型壳',     'WAX',         4,   60,   18, 'DUCTILE_IRON', 'AVAILABLE', '蜡模区 A-01', '型腔完好，可继续排产', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 DAY),

@@ -130,6 +130,50 @@ public final class Dict {
             "CARBURANT", "#e08a2b",
             "FLUX", "#9e7b3c");
 
+    // ---------------- 双方案推演工艺参数 ----------------
+    /** 炉料参考单价 元/kg：回炉料最便宜、合金料最贵，成本方案据此选料 */
+    private static final Map<String, BigDecimal> CHARGE_MATERIAL_COST = Map.of(
+            "PIG_IRON", BigDecimal.valueOf(3.20),
+            "SCRAP", BigDecimal.valueOf(0.80),
+            "FERRO_SI", BigDecimal.valueOf(6.50),
+            "FERRO_MN", BigDecimal.valueOf(7.80),
+            "CARBURANT", BigDecimal.valueOf(4.50),
+            "FLUX", BigDecimal.valueOf(1.20));
+
+    /** 各材质回炉料占比工艺上限 %：回炉料过多会累积微量元素、恶化材质性能 */
+    private static final Map<String, BigDecimal> SCRAP_RATIO_MAX = Map.of(
+            "CAST_IRON", BigDecimal.valueOf(65),
+            "DUCTILE_IRON", BigDecimal.valueOf(60),
+            "CARBON_STEEL", BigDecimal.valueOf(55),
+            "STAINLESS", BigDecimal.valueOf(60),
+            "ALUMINUM", BigDecimal.valueOf(85));
+
+    /**
+     * 各材质标准配料比 %（六个炉料品种，合计 100）：成分偏离方案的目标配方。
+     * 配方本身的回炉料占比不超过对应 {@link #SCRAP_RATIO_MAX}，保证配方在工艺上可达。
+     */
+    private static final Map<String, Map<String, BigDecimal>> CHARGE_RECIPE = Map.of(
+            "CAST_IRON", Map.of(
+                    "PIG_IRON", BigDecimal.valueOf(45), "SCRAP", BigDecimal.valueOf(45),
+                    "FERRO_SI", BigDecimal.valueOf(2.5), "FERRO_MN", BigDecimal.valueOf(1),
+                    "CARBURANT", BigDecimal.valueOf(3.5), "FLUX", BigDecimal.valueOf(3)),
+            "DUCTILE_IRON", Map.of(
+                    "PIG_IRON", BigDecimal.valueOf(55), "SCRAP", BigDecimal.valueOf(35),
+                    "FERRO_SI", BigDecimal.valueOf(3.5), "FERRO_MN", BigDecimal.valueOf(0.8),
+                    "CARBURANT", BigDecimal.valueOf(2.7), "FLUX", BigDecimal.valueOf(3)),
+            "CARBON_STEEL", Map.of(
+                    "PIG_IRON", BigDecimal.valueOf(38), "SCRAP", BigDecimal.valueOf(50),
+                    "FERRO_SI", BigDecimal.valueOf(1.5), "FERRO_MN", BigDecimal.valueOf(2.5),
+                    "CARBURANT", BigDecimal.valueOf(1), "FLUX", BigDecimal.valueOf(7)),
+            "STAINLESS", Map.of(
+                    "PIG_IRON", BigDecimal.valueOf(35), "SCRAP", BigDecimal.valueOf(55),
+                    "FERRO_SI", BigDecimal.valueOf(3), "FERRO_MN", BigDecimal.valueOf(3),
+                    "CARBURANT", BigDecimal.valueOf(0.5), "FLUX", BigDecimal.valueOf(3.5)),
+            "ALUMINUM", Map.of(
+                    "PIG_IRON", BigDecimal.valueOf(0), "SCRAP", BigDecimal.valueOf(80),
+                    "FERRO_SI", BigDecimal.valueOf(12), "FERRO_MN", BigDecimal.valueOf(1),
+                    "CARBURANT", BigDecimal.valueOf(0), "FLUX", BigDecimal.valueOf(7)));
+
     // ---------------- 模具型壳 ----------------
     public static final List<String> MOLD_TYPES = List.of(
             "WAX", "RESIN_SAND", "CERAMIC", "METAL");
@@ -366,6 +410,22 @@ public final class Dict {
 
     public static String chargeMaterialColor(String material) {
         return material == null ? "#8e24aa" : CHARGE_MATERIAL_COLOR.getOrDefault(material, "#8e24aa");
+    }
+
+    /** 炉料参考单价 元/kg，未知品种按 0 计（不影响可行性，只影响成本排序） */
+    public static BigDecimal chargeMaterialCost(String material) {
+        return material == null ? BigDecimal.ZERO : CHARGE_MATERIAL_COST.getOrDefault(material, BigDecimal.ZERO);
+    }
+
+    /** 材质回炉料占比工艺上限 %，未知材质按 60% 保守取值 */
+    public static BigDecimal scrapRatioMax(String alloy) {
+        return alloy == null ? BigDecimal.valueOf(60) : SCRAP_RATIO_MAX.getOrDefault(alloy, BigDecimal.valueOf(60));
+    }
+
+    /** 材质标准配料比（六个品种 → 占比 %，合计 100），未知材质回退为灰铁配方 */
+    public static Map<String, BigDecimal> chargeRecipe(String alloy) {
+        Map<String, BigDecimal> recipe = alloy == null ? null : CHARGE_RECIPE.get(alloy);
+        return recipe == null ? CHARGE_RECIPE.get("CAST_IRON") : recipe;
     }
 
     public static boolean isValidMoldType(String type) {

@@ -44,7 +44,10 @@ const charge = {
   detail: (id) => call(http.get(`/charge/${id}`)),
   create: (data) => call(http.post('/charge', data)),
   adjust: (id, data) => call(http.post(`/charge/${id}/adjust`, data)),
-  remove: (id) => call(http.delete(`/charge/${id}`))
+  remove: (id) => call(http.delete(`/charge/${id}`)),
+  // 双方案推演：未出炉炉次看板 + 同一输入版本一次算两套方案（只读试算）
+  simulateHeats: () => call(http.get('/charge/simulate/heats')),
+  simulate: (data) => call(http.post('/charge/simulate', data))
 }
 
 const mold = {
