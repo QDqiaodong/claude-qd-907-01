@@ -130,6 +130,60 @@ public final class Dict {
             "CARBURANT", "#e08a2b",
             "FLUX", "#9e7b3c");
 
+    // ---------------- 配料推演：材质工艺约束与参考成本 ----------------
+    // 双方案推演（最低补料成本 / 最小成分偏离）共用的同一份基准规则：
+    // 料种-材质兼容矩阵、材质标准配比、回炉料占比上限、炉料参考单价。
+    // 总重接近目标不能替代这些材质与工艺约束。
+
+    /** 各材质允许使用的炉料品种（工艺兼容矩阵）：不锈钢控碳不用增碳剂，铝合金不用生铁/锰铁/增碳剂 */
+    private static final Map<String, List<String>> ALLOY_ALLOWED_MATERIALS = Map.of(
+            "CAST_IRON", CHARGE_MATERIALS,
+            "DUCTILE_IRON", CHARGE_MATERIALS,
+            "CARBON_STEEL", CHARGE_MATERIALS,
+            "STAINLESS", List.of("PIG_IRON", "SCRAP", "FERRO_SI", "FERRO_MN", "FLUX"),
+            "ALUMINUM", List.of("SCRAP", "FERRO_SI", "FLUX"));
+
+    /** 各材质标准配比（%），合计 100；回炉料占比不超过该材质上限，保证标准配比本身合法 */
+    private static final Map<String, Map<String, Double>> ALLOY_STANDARD_MIX = Map.of(
+            "CAST_IRON", Map.of(
+                    "PIG_IRON", 30.0, "SCRAP", 60.0, "FERRO_SI", 3.0,
+                    "FERRO_MN", 1.0, "CARBURANT", 3.0, "FLUX", 3.0),
+            "DUCTILE_IRON", Map.of(
+                    "PIG_IRON", 28.0, "SCRAP", 62.0, "FERRO_SI", 3.5,
+                    "FERRO_MN", 2.5, "CARBURANT", 1.0, "FLUX", 3.0),
+            "CARBON_STEEL", Map.of(
+                    "PIG_IRON", 32.0, "SCRAP", 58.0, "FERRO_SI", 1.0,
+                    "FERRO_MN", 3.0, "CARBURANT", 1.0, "FLUX", 5.0),
+            "STAINLESS", Map.of(
+                    "PIG_IRON", 35.0, "SCRAP", 55.0, "FERRO_SI", 3.0,
+                    "FERRO_MN", 2.0, "CARBURANT", 0.0, "FLUX", 5.0),
+            "ALUMINUM", Map.of(
+                    "PIG_IRON", 0.0, "SCRAP", 80.0, "FERRO_SI", 11.0,
+                    "FERRO_MN", 0.0, "CARBURANT", 0.0, "FLUX", 9.0));
+
+    /** 各材质回炉料占比上限（%）：回炉料过多会带入杂质、成分波动大 */
+    private static final Map<String, BigDecimal> ALLOY_SCRAP_MAX_RATE = Map.of(
+            "CAST_IRON", BigDecimal.valueOf(70),
+            "DUCTILE_IRON", BigDecimal.valueOf(65),
+            "CARBON_STEEL", BigDecimal.valueOf(60),
+            "STAINLESS", BigDecimal.valueOf(55),
+            "ALUMINUM", BigDecimal.valueOf(85));
+
+    /** 炉料参考单价（元/kg）：回炉料为自有料最便宜，合金料贵；推演成本比较用 */
+    private static final Map<String, BigDecimal> CHARGE_MATERIAL_PRICE = Map.of(
+            "PIG_IRON", BigDecimal.valueOf(3.2),
+            "SCRAP", BigDecimal.valueOf(0.8),
+            "FERRO_SI", BigDecimal.valueOf(6.5),
+            "FERRO_MN", BigDecimal.valueOf(9.0),
+            "CARBURANT", BigDecimal.valueOf(4.0),
+            "FLUX", BigDecimal.valueOf(1.5));
+
+    /** 引入一个明细外新料种的固定开料成本（元/种）：备料、称量与工艺变更的代价 */
+    public static final BigDecimal NEW_MATERIAL_FEE = BigDecimal.valueOf(300);
+
+    /** 推演推荐取舍用的成分偏离可控带（与标准配比的 L1 偏差，百分点） */
+    public static final double ACCEPTABLE_COMPOSITION_DEVIATION = 8.0;
+
     // ---------------- 模具型壳 ----------------
     public static final List<String> MOLD_TYPES = List.of(
             "WAX", "RESIN_SAND", "CERAMIC", "METAL");
@@ -358,6 +412,27 @@ public final class Dict {
 
     public static boolean isValidChargeMaterial(String material) {
         return material != null && CHARGE_MATERIAL_NAME.containsKey(material);
+    }
+
+    /** 料种是否适用于该材质（工艺兼容矩阵） */
+    public static boolean isMaterialAllowedForAlloy(String alloy, String materialCode) {
+        List<String> allowed = ALLOY_ALLOWED_MATERIALS.get(alloy);
+        return allowed != null && allowed.contains(materialCode);
+    }
+
+    /** 材质标准配比（%），未知材质返回空表 */
+    public static Map<String, Double> standardMix(String alloy) {
+        return ALLOY_STANDARD_MIX.getOrDefault(alloy, Map.of());
+    }
+
+    /** 材质回炉料占比上限（%），未知材质返回 0（即不允许回炉料） */
+    public static BigDecimal scrapMaxRate(String alloy) {
+        return ALLOY_SCRAP_MAX_RATE.getOrDefault(alloy, BigDecimal.ZERO);
+    }
+
+    /** 炉料参考单价（元/kg），未知品种返回 0 */
+    public static BigDecimal chargeMaterialPrice(String materialCode) {
+        return CHARGE_MATERIAL_PRICE.getOrDefault(materialCode, BigDecimal.ZERO);
     }
 
     public static String chargeMaterialName(String material) {

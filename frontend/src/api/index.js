@@ -44,7 +44,9 @@ const charge = {
   detail: (id) => call(http.get(`/charge/${id}`)),
   create: (data) => call(http.post('/charge', data)),
   adjust: (id, data) => call(http.post(`/charge/${id}/adjust`, data)),
-  remove: (id) => call(http.delete(`/charge/${id}`))
+  remove: (id) => call(http.delete(`/charge/${id}`)),
+  // 配料偏差双方案推演（只读试算，不写库）
+  simulate: (data) => call(http.post('/charge/simulate', data))
 }
 
 const mold = {

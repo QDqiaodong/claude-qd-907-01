@@ -4,12 +4,14 @@ import com.casting.shop.common.BizException;
 import com.casting.shop.common.Dict;
 import com.casting.shop.domain.Charge;
 import com.casting.shop.domain.ChargeItem;
+import com.casting.shop.domain.Furnace;
 import com.casting.shop.domain.Heat;
 import com.casting.shop.dto.ChargeAdjustRequest;
 import com.casting.shop.dto.ChargeItemRequest;
 import com.casting.shop.dto.ChargeRequest;
 import com.casting.shop.repository.ChargeItemRepository;
 import com.casting.shop.repository.ChargeRepository;
+import com.casting.shop.repository.FurnaceRepository;
 import com.casting.shop.repository.HeatRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -34,12 +36,14 @@ public class ChargeService {
     private final ChargeRepository chargeRepository;
     private final ChargeItemRepository itemRepository;
     private final HeatRepository heatRepository;
+    private final FurnaceRepository furnaceRepository;
 
     public ChargeService(ChargeRepository chargeRepository, ChargeItemRepository itemRepository,
-                         HeatRepository heatRepository) {
+                         HeatRepository heatRepository, FurnaceRepository furnaceRepository) {
         this.chargeRepository = chargeRepository;
         this.itemRepository = itemRepository;
         this.heatRepository = heatRepository;
+        this.furnaceRepository = furnaceRepository;
     }
 
     public List<Charge> list() {
@@ -124,7 +128,7 @@ public class ChargeService {
         chargeRepository.deleteById(id);
     }
 
-    /** 配料看板：可配料的炉次（已登记出炉重量或计划重量）+ 六个炉料品种 */
+    /** 配料看板：可配料的炉次（已登记出炉重量或计划重量）+ 六个炉料品种 + 未出炉炉次（双方案推演用） */
     public Map<String, Object> board() {
         Map<String, Object> data = new LinkedHashMap<>();
         List<Heat> heats = heatRepository.findAllByOrderByIdAsc().stream()
@@ -141,7 +145,58 @@ public class ChargeService {
         }
         data.put("materials", materials);
         data.put("maxDeviationRate", Dict.MAX_CHARGE_DEVIATION_RATE);
+        data.put("maxItemWeight", Dict.MAX_ITEM_WEIGHT);
+        data.put("openHeats", openHeats());
         return data;
+    }
+
+    /**
+     * 未出炉炉次（装料/熔炼/精炼阶段）：双方案推演的候选对象。
+     * 每个炉次带上炉体容量与其最新一张配料单的明细快照，作为推演的同一份基准。
+     */
+    private List<Map<String, Object>> openHeats() {
+        Map<Long, Furnace> furnaceById = new LinkedHashMap<>();
+        for (Furnace f : furnaceRepository.findAllByOrderByIdAsc()) {
+            furnaceById.put(f.getId(), f);
+        }
+        // 每炉次最新一张配料单（id 最大者）
+        Map<Long, Charge> latestCharge = new LinkedHashMap<>();
+        for (Charge c : chargeRepository.findAllByOrderByIdDesc()) {
+            if (c.getHeatId() != null) {
+                latestCharge.putIfAbsent(c.getHeatId(), c);
+            }
+        }
+        List<Map<String, Object>> openHeats = new ArrayList<>();
+        for (Heat h : heatRepository.findAllByOrderByIdAsc()) {
+            String stage = h.getStage() == null ? "CHARGING" : h.getStage();
+            if ("TAPPING".equals(stage) || "POURED".equals(stage)) {
+                continue;
+            }
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("id", h.getId());
+            o.put("heatNo", h.getHeatNo());
+            o.put("stage", stage);
+            o.put("stageName", h.getStageName());
+            o.put("alloy", h.getAlloy());
+            o.put("alloyName", h.getAlloyName());
+            o.put("planWeight", h.getPlanWeight());
+            o.put("tapWeight", h.getTapWeight());
+            Furnace f = h.getFurnaceId() == null ? null : furnaceById.get(h.getFurnaceId());
+            o.put("furnaceNo", f != null ? f.getFurnaceNo() : h.getFurnaceNo());
+            o.put("capacityKg", f == null ? null : f.getCapacityKg());
+            Charge charge = latestCharge.get(h.getId());
+            if (charge != null) {
+                o.put("chargeId", charge.getId());
+                o.put("chargeNo", charge.getChargeNo());
+                o.put("items", itemRepository.findByChargeIdOrderByIdAsc(charge.getId()));
+            } else {
+                o.put("chargeId", null);
+                o.put("chargeNo", null);
+                o.put("items", List.of());
+            }
+            openHeats.add(o);
+        }
+        return openHeats;
     }
 
     // ---------------- 内部：合并 / 重算 / 校验 ----------------

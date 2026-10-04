@@ -4,7 +4,9 @@ import com.casting.shop.common.ApiResponse;
 import com.casting.shop.domain.Charge;
 import com.casting.shop.dto.ChargeAdjustRequest;
 import com.casting.shop.dto.ChargeRequest;
+import com.casting.shop.dto.ChargeSimulateRequest;
 import com.casting.shop.service.ChargeService;
+import com.casting.shop.service.ChargeSimulateService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,9 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChargeController {
 
     private final ChargeService service;
+    private final ChargeSimulateService simulateService;
 
-    public ChargeController(ChargeService service) {
+    public ChargeController(ChargeService service, ChargeSimulateService simulateService) {
         this.service = service;
+        this.simulateService = simulateService;
     }
 
     @GetMapping("/board")
@@ -54,6 +58,15 @@ public class ChargeController {
     @PostMapping("/{id}/adjust")
     public ApiResponse<Charge> adjust(@PathVariable Long id, @RequestBody ChargeAdjustRequest request) {
         return ApiResponse.success("配比已微调", service.adjust(id, request));
+    }
+
+    /**
+     * 配料偏差双方案推演：以当前配料明细、目标重量、炉体容量、合金材质、回炉料比例为同一份基准，
+     * 同步给出「最低补料成本」与「最小成分偏离」两套方案。只读试算，不改动任何业务数据。
+     */
+    @PostMapping("/simulate")
+    public ApiResponse<Map<String, Object>> simulate(@RequestBody ChargeSimulateRequest request) {
+        return ApiResponse.success(simulateService.simulate(request));
     }
 
     @DeleteMapping("/{id}")
